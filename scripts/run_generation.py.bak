@@ -1,0 +1,103 @@
+# Copyright (c) 2019-present, HuggingFace Inc.
+# All rights reserved. This source code is licensed under the BSD-style license found in the LICENSE file in the root directory of this source tree.
+import os
+import sys
+import argparse
+from pprint import pformat
+
+import torch
+from torch.utils.data import DataLoader
+import transformers
+from transformers import (CONFIG_NAME, AdamW)
+from torch.optim.lr_scheduler import LambdaLR
+from ignite.contrib.handlers import PiecewiseLinear, LRScheduler
+
+sys.path.append(os.getcwd())
+from datautils import LSCCDataSet
+from model import LabelSmoothing
+from utils import setup_seed, read_json, merge_config, get_logger
+from trainer import train
+
+# fix random seeds for reproducibility
+SEED = 123
+setup_seed(SEED)
+
+# from od.inputters.inputter import build_dataloaders, build_dist_loaders
+def get_data_loader(tokenizer):
+    # Initialize distributed training if needed
+    distributed = (args.local_rank != -1)
+    if distributed:
+        torch.cuda.set_device(args.local_rank)
+        args.device = torch.device("cuda", args.local_rank)
+        torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    logger.info(f"get data loader, distributed:{distributed}..")
+    train_data = LSCCDataSet(config.train_path, tokenizer, config.max_history)
+    val_data = LSCCDataSet(config.valid_path, tokenizer, config.max_history)
+    train_sampler = torch.utils.data.DistributedSampler(train_data) if distributed else None
+    val_sampler = torch.utils.data.DistributedSampler(val_data) if distributed else None
+    trn_data_loader = DataLoader(train_data, shuffle=not distributed, collate_fn=train_data.collate,
+                                 sampler=train_sampler, batch_size=config.batch_size, num_workers=config.num_workers)
+    val_data_loader = DataLoader(val_data, shuffle=not distributed, collate_fn=val_data.collate,
+                                 sampler=val_sampler, batch_size=config.batch_size, num_workers=config.num_workers)
+    return trn_data_loader, train_sampler, val_data_loader, val_sampler
+
+def get_model():
+    logger.info('get model')
+    tokenizer_class = transformers.__dict__[config.tokenizer]
+    model_class = transformers.__dict__[config.arch]
+    config_class = transformers.__dict__[config.model_config]
+
+    if config.pretrained:
+        tokenizer = tokenizer_class.from_pretrained(config.model_checkpoint, do_lower_case=True, never_split=["[speaker1]", "[speaker2]"])
+        model = model_class.from_pretrained(config.model_checkpoint)
+    else:
+        tokenizer = tokenizer_class(os.path.join(config.model_checkpoint, "vocab.txt"), do_lower_case=True, never_split=["[speaker1]", "[speaker2]"])
+        model_config = config_class.from_json_file(os.path.join(config.model_checkpoint, CONFIG_NAME))
+        model = model_class(model_config)
+    return model, tokenizer
+
+def get_optimizer(model, train_loader):
+    logger.info('get optimizer and scheduler')
+    optimizer = AdamW([{'params': model.parameters(), 'initial_lr': config.lr}], lr=config.lr, correct_bias=True)
+
+    # noam decrease the learning rate
+    # model_size = model.config.n_embd
+    model_size = config.n_emd
+    noam_lambda = lambda step: (
+            model_size ** (-0.5) * min((step + 1) ** (-0.5), (step + 1) * config.warmup_steps ** (-1.5)))
+    noam_scheduler = LambdaLR(optimizer, lr_lambda=noam_lambda, last_epoch=config.from_step)
+    scheduler = LRScheduler(noam_scheduler)
+    if config.scheduler == "linear":
+        scheduler = PiecewiseLinear(optimizer, "lr", [(0, config.lr), (config.n_epochs * len(train_loader), 0.0)])
+    return optimizer, scheduler
+
+
+def begin_work():
+    model, tokenizer = get_model()
+    criterion = LabelSmoothing(tokenizer.vocab_size, padding_idx=tokenizer.pad_token_id,
+                               smoothing=config.smoothing, ignore_idx=-1)
+    trn_data_loader, train_sampler, val_data_loader, val_sampler = get_data_loader(tokenizer)
+    optimizer, scheduler = get_optimizer(model, trn_data_loader)
+    train(config, logger, model, tokenizer, trn_data_loader, val_data_loader, train_sampler,
+          val_sampler, optimizer, scheduler, criterion)
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='PyTorch Template')
+    parser.add_argument('-c', '--config', default=r'configs/gpt2_chatbot.json', type=str,
+                        help='config file path (default: None)')
+    # parser.add_argument('-d', '--device', default=None, type=str,
+    #                     help='indices of GPUs to enable (default: all)')
+    parser.add_argument("--local_rank", type=int, default=-1,
+                        help="Local rank for distributed training (-1: not distributed)")
+    parser.add_argument("--fp16", type=str, default="",
+                        help="Set to O0, O1, O2 or O3 for fp16 training (see apex documentation)")
+    # custom cli options to modify configuration from default values given in json file.
+    args = parser.parse_args()
+    config = merge_config(read_json(args.config), vars(args))
+    logger = get_logger(__name__, config)
+    logger.info(config)
+    begin_work()
+
+
