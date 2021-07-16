@@ -163,10 +163,7 @@ def interact():
 
 class GPT2Proto(BaseTrainer):
     def __init__(self):
-        super(GPT2Proto, self).__init__(
-            dirpath=args.model_checkpoint, filename=args.filename, period=args.period,
-            monitor=args.monitor, mode=args.mode, patience=args.patience, num_workers=args.num_workers,
-        )
+        super(GPT2Proto, self).__init__(args)
         self.model, self.tokenizer = model, tokenizer
         self.criterion = LabelSmoothing(self.tokenizer.vocab_size, padding_idx=self.tokenizer.pad_token_id,
                                         smoothing=args.smooth, ignore_idx=-100)

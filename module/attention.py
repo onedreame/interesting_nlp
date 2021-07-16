@@ -18,10 +18,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import copy
-import json
 import math
-import six
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,8 +36,8 @@ class Attention(nn.Module):
         elif method == "general":
             self.line_q = nn.Linear(dim, dim, bias=False)
         elif method == "concat":
-            self.line = nn.Linear(dim, dim, bias=False)
-            self.attn = nn.Parameter(torch.FloatTensor(dim, dim))
+            self.line = nn.Linear(dim*2, dim, bias=False)
+            self.v = nn.Parameter(torch.FloatTensor(1, dim))
         elif method == "bahdanau":
             self.line_q = nn.Linear(dim, dim, bias=False)
             self.line_k = nn.Linear(dim, dim, bias=False)
@@ -65,8 +62,8 @@ class Attention(nn.Module):
             elif method == "general":
                 return k.bmm(self.line_q(q).unsqueeze(-1)).squeeze(-1)
             elif method == "concat":
-                out = F.tanh(self.line(torch.cat((q.unsqueeze(1), k), 1)))
-                return out.bmm(self.attn.unsqueeze(2)).squeeze(-1)
+                out = F.tanh(self.line(torch.cat((q.unsqueeze(1).repeat(1, k.size(1), 1), k), -1))).transpose(1,2)
+                return self.v.matmul(out).squeeze(1)
             elif method == "bahdanau":
                 q = q.unsqueeze(1)
                 out = F.tanh(self.line_q(q) + self.line_k(k))
@@ -78,7 +75,6 @@ class Attention(nn.Module):
         attn_weights = F.softmax(attn_weights, -1)
         normalization_factor = attn_weights.sum(1, keepdim=True)
         attn_weights = attn_weights / normalization_factor
-
         return attn_weights.unsqueeze(1).bmm(v).squeeze(1)
 
 class SelfAttention(nn.Module):

@@ -10,31 +10,29 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint,LearningR
 
 from utils import setup_seed
 
-__all__ = [ 'BaseTrainer', "BertForSequenceClassification"]
+__all__ = ['BaseTrainer', "BertForSequenceClassification"]
 
 
 class BaseTrainer(LightningModule):
-    def __init__(self, dirpath=None, filename=None, period=3, seed=1234,
-                 monitor=None, mode="min", patience=3, num_workers=8):
+    def __init__(self, conf):
         super(BaseTrainer, self).__init__()
-        self.checkpoint_callback = ModelCheckpoint(dirpath=dirpath, filename=filename, save_top_k=1,
-                                                   period=period,  monitor=monitor, mode=mode)
+        self.conf = conf
+        self.checkpoint_callback = ModelCheckpoint(dirpath=conf.dirpath, filename=conf.filename, save_top_k=1,
+                                                   period=conf.period,  monitor=conf.monitor, mode=conf.mode)
         # early stop 的patience统计的是val的epochs数目，不是train的epochs数目，这里注意
-        self.early_stop_callback = EarlyStopping(monitor=monitor, mode=mode,patience=patience)
+        self.early_stop_callback = EarlyStopping(monitor=conf.monitor, mode=conf.mode,patience=conf.patience)
         self.lr_monitor = LearningRateMonitor('step')
-        self.seed = seed
-        self.num_workers = num_workers
 
     def on_fit_start(self):
-        setup_seed(self.seed)
+        setup_seed(self.conf.seed)
         super().on_fit_start()
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_data, batch_size=self.args.batch_size, num_workers=self.num_workers,
+        return DataLoader(self.train_data, batch_size=self.conf.batch_size, num_workers=self.conf.num_workers,
                           collate_fn=self.train_data.collate)
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(self.val_data,  batch_size=self.args.batch_size, num_workers=self.num_workers,
+        return DataLoader(self.val_data,  batch_size=self.conf.batch_size, num_workers=self.conf.num_workers,
                           collate_fn=self.val_data.collate)
 
 

@@ -5,6 +5,61 @@ from .embedding import PositionEmbedding, WordEmbedding
 from .transform import RNN
 from .attention import Attention
 
+__all__ = ['DecoderRNN']
+
+class DecoderRNN(nn.Module):
+    def __init__(self, attn_model, hidden_size, output_size, n_layers=1, dropout=0.1,
+                 use_pretrained_embed=False, pretrained_embed=None, fine_tune=True, **kwargs):
+        super(DecoderRNN, self).__init__()
+
+        # Keep for reference
+        self.attn_model = attn_model
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.n_layers = n_layers
+        self.dropout = dropout
+
+        # Define layers
+        # self.embedding = nn.Embedding(output_size, hidden_size)
+        self.embedding = WordEmbedding(
+            output_size, hidden_size, use_pretrained_embed,
+            pretrained_embed, fine_tune)
+        self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=dropout)
+        self.embedding_dropout = nn.Dropout(dropout)
+        self.concat = nn.Linear(hidden_size * 2, hidden_size)
+        self.generator = nn.Linear(hidden_size, output_size)
+        self.attn_model = attn_model
+
+        # Choose attention model
+        if attn_model != 'none':
+            self.attn = Attention(hidden_size, attn_model)
+
+    def forward(self, input_seq, context, encoder_outputs=None):
+        # Get the embedding of the current input word (last output word)
+        input_seq = input_seq.unsqueeze(0)
+        embedded = self.embedding(input_seq)
+        embedded = self.embedding_dropout(embedded)
+        self.gru.flatten_parameters()
+        rnn_output, hidden = self.gru(embedded, context)
+
+        if self.attn_model != "none":
+            # Calculate attention from current RNN state and all encoder outputs;
+            # apply to encoder outputs to get weighted average
+            # 这里使用最底层的hidden
+            context = self.attn(hidden[0], encoder_outputs, encoder_outputs)  # B 1 H
+            # context = attn_weights.bmm(encoder_outputs)  # B 1 H
+
+            # Attentional vector using the RNN hidden state and context vector
+            # concatenated together (Luong eq. 5)
+            # context = context.transpose(0, 1)  # 1 x B x N
+            concat_input = torch.cat((rnn_output.squeeze(0), context.squeeze(1)), -1)  # B × 2*N
+            concat_output = torch.tanh(self.concat(concat_input))
+
+            # Finally predict next token (Luong eq. 6, without softmax)
+            output = self.generator(concat_output)
+        else:
+            output = self.generator(rnn_output.squeeze(0))
+        return output, hidden
 
 class RNNDecoder(nn.Module):
     def __init__(self, vocab, conf):

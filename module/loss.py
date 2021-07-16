@@ -124,11 +124,10 @@ class LabelSmoothing(nn.Module):
         x = F.log_softmax(x, dim=-1)
         # 过滤掉padding idx的logits
         if self.ignore_idx is not None:
-            x = x[target.ne(self.padding_idx) & target.ne(self.ignore_idx)]
-            target = target[target.ne(self.padding_idx) & target.ne(self.ignore_idx)]
-        else:
-            x = x[target.ne(self.padding_idx)]
-            target = target[target.ne(self.padding_idx)]
+            x = x[target.ne(self.ignore_idx)]
+            target = target[target.ne(self.ignore_idx)]
+        x = x[target.ne(self.padding_idx)]
+        target = target[target.ne(self.padding_idx)]
         true_dist = x.clone().type_as(x)
         true_dist.fill_(self.smoothing / (self.size - 2))
         true_dist.scatter_(1, target.unsqueeze(1), self.confidence)

@@ -4,13 +4,14 @@ import sys
 import json
 import pickle
 from tqdm import tqdm
+from itertools import chain
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
 sys.path.append(os.getcwd())
-from .base import BaseDataset
+from datautils.base import BaseDataset
 
-__all__ = ['LSCCDataSet', 'THUCNewsDataset']
+__all__ = ['LSCCDataSet', 'THUCNewsDataset', 'TextFileDataset']
 
 
 class LSCCDataSet(BaseDataset):
@@ -164,21 +165,23 @@ class THUCNewsDataset(BaseDataset):
         label = torch.LongTensor([b['label'] for b in batch])
         return input_ids, token_type_ids, attn_mask, label
 
-class TextFileDataset(SingleFIleDataset):
-    def __init__(self, path, tokenizer, seq_len=15, cache_dir="cache"):
-        super(TextFileDataset, self).__init__(path)
-        self.tokenizer = tokenizer
+class TextFileDataset(BaseDataset):
+    def __init__(self, path, tokenizer, seq_len=30, cache_dir="cache"):
+        super(TextFileDataset, self).__init__(tokenizer)
         self.seq_len = seq_len
-        cache_file = os.path.join(cache_dir, "_".join([path.replace("/", "_"), str(len(self.data))]))
+        cache_file = os.path.join(cache_dir, path.replace("/", "_"))
         if not os.path.exists(cache_dir):
             os.mkdir(cache_dir)
         if os.path.exists(cache_file) and os.path.isfile(cache_file):
             with open(cache_file, 'rb') as f:
                 self.word_seqs = pickle.load(f)
         else:
-            self.word_seqs = Tex
+            with open(path, 'r') as f:
+                self.word_seqs = list(chain(*[self.encode(tokenizer, line.strip()) for i, line in enumerate(f)]))
             with open(cache_file, 'wb') as f:
-                pickle.dump(self.convs, f)
+                pickle.dump(self.word_seqs, f)
+        print("decode result")
+        print(self.tokenizer.decode(self.word_seqs))
 
     @staticmethod
     def encode(tokenizer, sent):
@@ -191,23 +194,47 @@ class TextFileDataset(SingleFIleDataset):
         return tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
 
     def __len__(self):
-        return len(self.convs)
+        return len(self.word_seqs) // self.seq_len
 
     def __getitem__(self, item):
-        return self.convs[item]
+        return self.word_seqs[item * self.seq_len : min(len(self.word_seqs), (item + 1) * self.seq_len)] + \
+               [self.tokenizer.eos_token_id]
 
     def collate(self, batch):
-        if self.tokenizer._pad_token is None:
+        if self.tokenizer.pad_token is None:
             pad_value = 0
         else:
             pad_value = self.tokenizer.pad_token_id
-        input_ids = pad_sequence([torch.tensor(b['input_ids'], dtype=torch.long) for b in batch],
+        input_ids = pad_sequence([torch.tensor(b, dtype=torch.long) for b in batch],
                                  batch_first=True, padding_value=pad_value)
-        token_type_ids = pad_sequence([torch.tensor(b['token_type_ids'], dtype=torch.long) for b in batch],
-                                      batch_first=True, padding_value=pad_value)
-        lm_labels = pad_sequence([torch.tensor(b['lm_labels'], dtype=torch.long) for b in batch],
-                                 batch_first=True, padding_value=-100)
-        return input_ids, token_type_ids, lm_labels
+        input_lens = torch.tensor([len(b) for b in batch], dtype=torch.long)
+        return input_ids, input_lens
 
 if __name__ == '__main__':
-    LSCCDataSet('../chatbot/datasets/lscc/LCCC-base_train.json',)
+    # LSCCDataSet('../chatbot/datasets/lscc/LCCC-base_train.json',)
+    from module import BasicTokenizer
+    tokenizer = BasicTokenizer('/root/PycharmProjects/interesting_nlp/datasets/doupo/label.tsv',need_tokenize=False)
+    # print(tokenizer.vocab)
+    # print(tokenizer.pad_token)
+    # print(tokenizer.pad_token_id)
+    print(tokenizer.decode([162, 1948, 2951, 3517, 3066, 163, 1075, 3692, 982, 3962, 200, 2265, 1061, 1990, 4752, 2066, 240, 212]))
+    print(tokenizer.decode(torch.tensor([ 162, 1948, 2951, 3517, 3066,  163, 1075, 3692,  982, 3962,  200, 2265,
+         1061, 1990, 4752, 2066,  240,  212,  204,  204, 1279, 3915, 3289,    8,
+         4785,   14, 4785,   14, 4785,    9, 4786], dtype=torch.int)))
+    for b in torch.tensor([ 162, 1948, 2951, 3517, 3066,  163, 1075, 3692,  982, 3962,  200, 2265,
+         1061, 1990, 4752, 2066,  240,  212,  204,  204, 1279, 3915, 3289,    8,
+         4785,   14, 4785,   14, 4785,    9, 4786]).tolist():
+        print(b)
+
+    val_data = TextFileDataset('/root/PycharmProjects/interesting_nlp/datasets/doupo/train.txt', tokenizer)
+    iter = torch.utils.data.DataLoader(val_data, batch_size=4, num_workers=2,collate_fn=val_data.collate)
+    print(val_data.word_seqs)
+    print("$$$$$$$$$$$$$$$$$$\n", tokenizer.decode(val_data.word_seqs))
+    for batch in iter:
+        inputs, lens = tuple(b for b in batch)
+        print(inputs)
+        print(inputs.dtype)
+        print(lens)
+        for b in inputs:
+            print("raw: ", b)
+            print(tokenizer.decode(b.tolist()))

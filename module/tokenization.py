@@ -22,7 +22,7 @@ import collections
 import unicodedata
 import six
 
-__all__ = ['FullTokenizer']
+__all__ = ['FullTokenizer', 'BasicTokenizer']
 
 
 def convert_to_unicode(text):
@@ -68,31 +68,26 @@ def printable_text(text):
         raise ValueError("Not running on Python2 or Python 3?")
 
 
-def load_vocab(vocab_file):
+def load_vocab(vocab_file, sep='\t'):
     """Loads a vocabulary file into a dictionary."""
     vocab = collections.OrderedDict()
-    index = 0
-    with open(vocab_file, "r") as reader:
-        while True:
-            token = convert_to_unicode(reader.readline())
-            if not token:
-                break
-            token = token.strip()
-            vocab[token] = index
-            index += 1
+    index = 4  # 0-3 for special token
+    with open(vocab_file, "r", encoding='utf-8') as f:
+        for line in f:
+            tokens = convert_to_unicode(line).strip().split(sep)
+            if len(tokens) > 1:
+                try:
+                    vocab[tokens[0]] = int(tokens[1])
+                except:
+                    print(f'Error line: {line}')
+            else:
+                vocab[tokens] = index
+                index += 1
     return vocab
 
 
-def convert_tokens_to_ids(vocab, tokens):
-    """Converts a sequence of tokens into ids using the vocab."""
-    ids = []
-    for token in tokens:
-        ids.append(vocab[token])
-    return ids
-
-
 def whitespace_tokenize(text):
-    """Runs basic whitespace cleaning and splitting on a peice of text."""
+    """Runs basic whitespace cleaning and splitting on a piece of text."""
     text = text.strip()
     if not text:
         return []
@@ -100,14 +95,82 @@ def whitespace_tokenize(text):
     return tokens
 
 
-class FullTokenizer(object):
+class BaseTokenizer(object):
+    '''Base Tokenizer'''
+
+    def __init__(self, vocab_file=None, need_tokenize=True, **kwargs):
+        if vocab_file is None:
+            raise RuntimeError("vocab_file is None!")
+        self.vocab = collections.OrderedDict()
+        self.build_vocab(vocab_file, need_tokenize)
+        self.add_default_special(**kwargs)
+        self.id2token = {id: token for token, id in self.vocab.items()}
+
+    def add_default_special(self, **kwargs):
+        """
+        为tokenizer添加几个特殊的token
+        """
+        self.add_special("unk_token", kwargs.get("unk_token", "<unk>"))
+        self.add_special("pad_token", kwargs.get("pad_token", "<pad>"))
+        self.add_special("eos_token", kwargs.get("eos_token", "<eos>"))
+        self.add_special("sos_token", kwargs.get("sos_token", "<sos>"))
+
+    def add_special(self, name, token):
+        if self.vocab is None:
+            raise RuntimeError("Please use build_vocab to initialize vocab")
+        if name not in self.vocab:
+            self.vocab[token] = len(self.vocab)
+        self.__setattr__(name, token)
+        self.__setattr__(name + "_id", self.vocab[token])
+
+    @property
+    def vocab_size(self):
+        return 0 if self.vocab is None else len(self.vocab)
+
+    def tokenize(self, text):
+        raise NotImplementedError
+
+    def convert_tokens_to_ids(self, tokens):
+        """Converts a sequence of tokens into ids using the vocab."""
+        ids = []
+        for token in tokens:
+            ids.append(self.vocab.get(token, self.unk_token_id))
+        return ids
+
+    def convert_ids_to_tokens(self, ids):
+        return [self.id2token.get(id, self.unk_token) for id in ids]
+
+    def decode(self, ids):
+        return "".join(self.convert_ids_to_tokens(ids))
+
+    def get_token_counter(self, content_path):
+        counter = collections.Counter()
+        with open(content_path, "r", encoding="utf-8") as f:
+            for line in f:
+                tokens = self.tokenize(line.strip())
+                counter.update(tokens)
+        return counter
+
+    def build_vocab(self, file_for_vocab, need_tokenize=False, min_freq=1, **kwargs):
+        """
+        build vocabulary
+        need_tokenize: bool, if true, vocab file must be a vocabulary file
+        """
+        if not need_tokenize:
+            self.vocab.update(load_vocab(file_for_vocab))
+            return
+        counter = self.get_token_counter(file_for_vocab)
+        self.vocab.update({token: idx + 4 for idx, (token, freq) in enumerate(counter.items()) if freq >= min_freq})
+
+
+class FullTokenizer(BaseTokenizer):
     """Runs end-to-end tokenziation."""
 
-    def __init__(self, vocab_file, do_lower_case=True):
-        self.vocab = load_vocab(vocab_file)
-        self.vocab_size = len(self.vocab)
+    def __init__(self, vocab_file, do_lower_case=True, need_tokenize=True, **kwargs):
+        self.do_lower_case = do_lower_case
         self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case)
         self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
+        super(FullTokenizer, self).__init__(vocab_file, need_tokenize, **kwargs)
 
     def tokenize(self, text):
         split_tokens = []
@@ -117,20 +180,19 @@ class FullTokenizer(object):
 
         return split_tokens
 
-    def convert_tokens_to_ids(self, tokens):
-        return convert_tokens_to_ids(self.vocab, tokens)
 
-
-class BasicTokenizer(object):
+class BasicTokenizer(BaseTokenizer):
     """Runs basic tokenization (punctuation splitting, lower casing, etc.)."""
 
-    def __init__(self, do_lower_case=True):
+    def __init__(self, vocab_file=None, do_lower_case=True, need_tokenize=True, **kwargs):
         """Constructs a BasicTokenizer.
 
         Args:
           do_lower_case: Whether to lower case the input.
+          vocab: Vocab.
         """
         self.do_lower_case = do_lower_case
+        super(BasicTokenizer, self).__init__(vocab_file, need_tokenize, **kwargs)
 
     def tokenize(self, text):
         """Tokenizes a piece of text."""
@@ -234,13 +296,12 @@ class BasicTokenizer(object):
         return "".join(output)
 
 
-class WordpieceTokenizer(object):
+class WordpieceTokenizer(BaseTokenizer):
     """Runs WordPiece tokenization."""
 
-    def __init__(self, vocab, unk_token="[UNK]", max_input_chars_per_word=100):
-        self.vocab = vocab
-        self.unk_token = unk_token
+    def __init__(self, vocab_file, need_tokenize=False, max_input_chars_per_word=100, **kwargs):
         self.max_input_chars_per_word = max_input_chars_per_word
+        super(WordpieceTokenizer, self).__init__(vocab_file, need_tokenize=need_tokenize, **kwargs)
 
     def tokenize(self, text):
         """Tokenizes a piece of text into its word pieces.

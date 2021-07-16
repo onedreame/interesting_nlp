@@ -42,8 +42,8 @@ ACT2FN = {"gelu": gelu, "relu": torch.nn.functional.relu}
 class WordEmbedding(nn.Module):
     ''' convert word sequence to embeddings '''
 
-    def __init__(self, vocab_size, embed_dim, use_pretrained_embed,
-                 pretrained_embed, fine_tune):
+    def __init__(self, vocab_size, embed_dim, use_pretrained_embed=False,
+                 pretrained_embed=None, fine_tune=True, **kwargs):
         super(WordEmbedding, self).__init__()
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)
