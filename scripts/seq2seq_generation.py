@@ -3,6 +3,7 @@
 import os
 import sys
 import argparse
+import random
 import logging
 from pprint import pformat
 
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import LambdaLR
 from transformers import AdamW, get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
 from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import TensorBoardLogger
 
 sys.path.append(os.getcwd())
 from datautils import TextFileDataset
@@ -121,43 +123,46 @@ class Seq2SeqProto(BaseTrainer):
     def training_step(self, batch, batch_idx):
         input_ids, input_lens = tuple(input_tensor for input_tensor in batch)
         lm_logits = self.model(input_ids, input_ids, input_lens)
+        idx = random.randint(0, input_ids.size(0)-1)
         if batch_idx % args.print_freq == 0:
             logger.warning(
-                f'Train: 预测句子：{self.tokenizer.decode(lm_logits.argmax(-1)[0].tolist())}\n\t原始：'
-                f'{self.tokenizer.decode(input_ids[0].tolist())}'
+                f'Train: 预测句子：{self.tokenizer.decode(lm_logits.argmax(-1)[idx].tolist())}\n\t原始：'
+                f'{self.tokenizer.decode(input_ids[idx].tolist())}'
             )
         lm_logits_flat_shifted = lm_logits.view(-1, lm_logits.size(-1))
         lm_labels_flat_shifted = input_ids.view(-1)
         loss = self.criterion(lm_logits_flat_shifted, lm_labels_flat_shifted)
         ppl = torch.exp(F.cross_entropy(lm_logits_flat_shifted, lm_labels_flat_shifted, ignore_index=-100))
-        tensorboard_logs = {
-            'train_loss': loss,
-            'lr': self.optimizer.param_groups[0]['lr'],
-            'train_ppl': ppl
-        }
         # self.log_dict(tensorboard_logs, prog_bar=True, on_step=True)
+        self.log_dict({"loss": loss, 'lr': self.optimizer.param_groups[0]['lr']}, prog_bar=True, on_step=True)
+        # return loss
         return {'loss': loss, "lr": self.optimizer.param_groups[0]['lr']}
         # return {"loss": loss, 'log': tensorboard_logs}
 
+    def training_epoch_end(self, outputs) -> None:
+        avg_loss = torch.stack([b['loss'] for b in outputs]).mean()
+        # self.log_dict({'loss': avg_loss.item(), 'lr':outputs[0]['lr']}, prog_bar=True)
+        # self.log("loss", avg_loss.item(), prog_bar=True)
+        tb_logger.experiment.add_scalar('train_loss', avg_loss.item(), self.current_epoch)
+
     def validation_step(self, batch, batch_idx: int):
         input_ids, input_lens = tuple(input_tensor for input_tensor in batch)
-        lm_logits = self.model(input_ids, input_ids, src_lengths=input_lens)
+        lm_logits = self.model(input_ids, input_ids, src_lengths=input_lens, teacher_forcing_ratio=0)
         lm_logits_flat_shifted = lm_logits.view(-1, lm_logits.size(-1))
         lm_labels_flat_shifted = input_ids.view(-1)
+        idx = random.randint(0, input_ids.size(0)-1)
         if batch_idx % args.print_freq == 0:
-            logger.warning(f'Valid:预测句子：{self.tokenizer.decode(lm_logits.argmax(-1)[0].tolist())}\n\t原始：'
-                           f'{self.tokenizer.decode(input_ids[0].tolist())}')
+            logger.warning(f'Valid:预测句子：{self.tokenizer.decode(lm_logits.argmax(-1)[idx].tolist())}\n\t原始：'
+                           f'{self.tokenizer.decode(input_ids[idx].tolist())}')
         loss = self.criterion(lm_logits_flat_shifted, lm_labels_flat_shifted)
         ppl = torch.exp(F.cross_entropy(lm_logits_flat_shifted, lm_labels_flat_shifted, ignore_index=-100))
-        self.log('val_loss', loss, prog_bar=True)
-        # self.log('val_ppl', ppl, prog_bar=True)
+        return {"val_loss": loss}
         # return {"val_loss": loss, 'val_ppl': ppl}
 
-    # def validation_epoch_end(self, outputs: List[Any]):
-    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-    #     avg_ppl = torch.stack([x['val_ppl'] for x in outputs]).mean()
-    #     tensorboard_logs = {'val_loss': avg_loss.item(), 'val_ppl': avg_ppl.item()}
-    #     return {'val_loss': avg_loss, 'progress_bar': tensorboard_logs}
+    def validation_epoch_end(self, outputs):
+        avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+        self.log("val_loss", avg_loss.item(), prog_bar=True)
+        tb_logger.experiment.add_scalar('val_loss', avg_loss.item(), self.current_epoch)
 
     def forward(self, input_ids, token_type_ids):
         lm_logits = self.model(input_ids)
@@ -192,8 +197,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='run generation')
     parser.add_argument('--monitor', default='auto', type=str, help='callback monitor')
     parser.add_argument("--logdir", default="log", type=str)
-    parser.add_argument('--dirpath', default='.', type=str, help='dir path of checkpoint')
-    parser.add_argument('--filename', default='checkpoint', type=str, help='filename of checkpoint')
+    parser.add_argument('--dirpath', default='checkpoint', type=str, help='dir path of checkpoint')
+    parser.add_argument('--filename', default='{epoch}-{val_loss:.2f}', type=str, help='filename of checkpoint')
     parser.add_argument('--period', default=1, type=int, help='number of epoches to save')
     parser.add_argument('--mode', default='min', type=str, help='mode of monitor, (min,max)')
     parser.add_argument('--print_freq', default=500, type=int, help='print frequency')
@@ -203,15 +208,15 @@ if __name__ == "__main__":
     parser = Seq2SeqProto.add_model_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
+    tb_logger = TensorBoardLogger(os.path.join(args.logdir, __name__), name=__name__)
 
     if args.interact:
         # interact()
         pass
     else:
-        seq2seq = Seq2SeqProto(args)
-        trainer = Trainer.from_argparse_args(args, checkpoint_callback=seq2seq.checkpoint_callback,
-                                             default_root_dir=args.logdir,
-                                             callbacks=[seq2seq.early_stop_callback, seq2seq.lr_monitor],
+        seq2seq = Seq2SeqProto.load_from_checkpoint('checkpoint/epoch=9-val_loss=6.34-loss=6.14.ckpt',conf=args)
+        trainer = Trainer.from_argparse_args(args, default_root_dir=args.logdir,
+                                             callbacks=[seq2seq.early_stop_callback, seq2seq.checkpoint_callback],
                                              check_val_every_n_epoch=args.valid_steps,
                                              auto_select_gpus=True,  # auto_lr_find=True,
                                              accumulate_grad_batches=args.gradient_accumulation_steps,

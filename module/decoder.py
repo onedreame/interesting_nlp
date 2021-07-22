@@ -8,7 +8,7 @@ from .attention import Attention
 __all__ = ['DecoderRNN']
 
 class DecoderRNN(nn.Module):
-    def __init__(self, attn_model, hidden_size, output_size, n_layers=1, dropout=0.1,
+    def __init__(self, attn_model, hidden_size, output_size, n_layers=1, dropout=0.1, use_coverage=False,
                  use_pretrained_embed=False, pretrained_embed=None, fine_tune=True, **kwargs):
         super(DecoderRNN, self).__init__()
 
@@ -18,6 +18,7 @@ class DecoderRNN(nn.Module):
         self.output_size = output_size
         self.n_layers = n_layers
         self.dropout = dropout
+        self.use_coverage = use_coverage
 
         # Define layers
         # self.embedding = nn.Embedding(output_size, hidden_size)
@@ -32,9 +33,9 @@ class DecoderRNN(nn.Module):
 
         # Choose attention model
         if attn_model != 'none':
-            self.attn = Attention(hidden_size, attn_model)
+            self.attn = Attention(hidden_size, attn_model, use_coverage)
 
-    def forward(self, input_seq, context, encoder_outputs=None):
+    def forward(self, input_seq, context, encoder_outputs=None, coverage_tensor=None, coverage_mask=None):
         # Get the embedding of the current input word (last output word)
         input_seq = input_seq.unsqueeze(0)
         embedded = self.embedding(input_seq)
@@ -46,7 +47,7 @@ class DecoderRNN(nn.Module):
             # Calculate attention from current RNN state and all encoder outputs;
             # apply to encoder outputs to get weighted average
             # 这里使用最底层的hidden
-            context = self.attn(hidden[0], encoder_outputs, encoder_outputs)  # B 1 H
+            context = self.attn(hidden[0], encoder_outputs, encoder_outputs, coverage_tensor, coverage_mask)  # B 1 H
             # context = attn_weights.bmm(encoder_outputs)  # B 1 H
 
             # Attentional vector using the RNN hidden state and context vector

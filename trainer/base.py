@@ -18,7 +18,8 @@ class BaseTrainer(LightningModule):
         super(BaseTrainer, self).__init__()
         self.conf = conf
         self.checkpoint_callback = ModelCheckpoint(dirpath=conf.dirpath, filename=conf.filename, save_top_k=1,
-                                                   period=conf.period,  monitor=conf.monitor, mode=conf.mode)
+                                                   every_n_val_epochs=conf.period,  monitor=conf.monitor,
+                                                   mode=conf.mode)
         # early stop 的patience统计的是val的epochs数目，不是train的epochs数目，这里注意
         self.early_stop_callback = EarlyStopping(monitor=conf.monitor, mode=conf.mode,patience=conf.patience)
         self.lr_monitor = LearningRateMonitor('step')
@@ -29,11 +30,11 @@ class BaseTrainer(LightningModule):
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_data, batch_size=self.conf.batch_size, num_workers=self.conf.num_workers,
-                          collate_fn=self.train_data.collate)
+                          collate_fn=self.train_data.collate, shuffle=True)
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(self.val_data,  batch_size=self.conf.batch_size, num_workers=self.conf.num_workers,
-                          collate_fn=self.val_data.collate)
+                          collate_fn=self.val_data.collate, shuffle=False)
 
 
 class BertForSequenceClassification(nn.Module):

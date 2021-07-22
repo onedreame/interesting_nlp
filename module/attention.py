@@ -25,11 +25,17 @@ import torch.nn.functional as F
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, method="dot"):
+    def __init__(self, dim, method="dot", use_coverage=False):
+        """
+        使用覆盖机制：https://arxiv.org/abs/1601.04811
+        coverage_tensor: [batch_size, seq_len]
+        """
         super(Attention, self).__init__()
 
         self.method = method
         self.dim = dim
+        if use_coverage:
+            self.coverage_w = nn.Linear(1, dim, bias=False)
 
         if method == "dot":
             pass
@@ -41,16 +47,19 @@ class Attention(nn.Module):
         elif method == "bahdanau":
             self.line_q = nn.Linear(dim, dim, bias=False)
             self.line_k = nn.Linear(dim, dim, bias=False)
-            self.attn = nn.Parameter(torch.FloatTensor(dim, dim))
+            self.v = nn.Parameter(torch.FloatTensor(1, dim))
+            # self.attn = nn.Parameter(torch.FloatTensor(dim, dim))
         else:
             raise NotImplementedError
 
-    def forward(self, q, k, v):
+    def forward(self, q, k, v, coverage_tensor=None, coverage_mask=None):
         def _score(q, k, method):
             """
             Computes an attention score
             : param q: size (batch_size, dim)
             : param k: size (batch_size, lens, dim)
+            : param coverage_tensor: 覆盖向量， (batch_size, lens)
+            : param coverage_mask: 覆盖向量mask，(batch_size, lens)
             : param method: str ("dot", "general", "concat", "bahdanau")
             : return: Attention score: size (batch_size, lens)
             """
@@ -65,9 +74,14 @@ class Attention(nn.Module):
                 out = F.tanh(self.line(torch.cat((q.unsqueeze(1).repeat(1, k.size(1), 1), k), -1))).transpose(1,2)
                 return self.v.matmul(out).squeeze(1)
             elif method == "bahdanau":
+                if self.coverage_tensor is not None:
+                    coverage = self.coverage_w(self.coverage_tensor).unsqueeze(1)
+                else:
+                    coverage = 0
                 q = q.unsqueeze(1)
-                out = F.tanh(self.line_q(q) + self.line_k(k))
-                return out.bmm(self.attn.unsqueeze(2)).squeeze(-1)
+                out = F.tanh(self.line_q(q) + self.line_k(k) + coverage)  # [B, L, D]
+                return self.v.matmul(out.transpose(1,2)).squeeze(1)
+                # return out.bmm(self.attn.unsqueeze(2)).squeeze(-1)
             else:
                 raise NotImplementedError
 
@@ -75,7 +89,10 @@ class Attention(nn.Module):
         attn_weights = F.softmax(attn_weights, -1)
         normalization_factor = attn_weights.sum(1, keepdim=True)
         attn_weights = attn_weights / normalization_factor
-        return attn_weights.unsqueeze(1).bmm(v).squeeze(1)
+
+        if coverage_tensor is not None:
+            coverage_tensor = coverage_tensor + attn_weights
+        return attn_weights.unsqueeze(1).bmm(v).squeeze(1),  coverage_tensor
 
 class SelfAttention(nn.Module):
     def __init__(self, config):

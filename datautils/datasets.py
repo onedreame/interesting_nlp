@@ -175,13 +175,13 @@ class TextFileDataset(BaseDataset):
         if os.path.exists(cache_file) and os.path.isfile(cache_file):
             with open(cache_file, 'rb') as f:
                 self.word_seqs = pickle.load(f)
+                print("小说总长度：", len(self.word_seqs))
+                self.word_seqs = self.word_seqs[:int(len(self.word_seqs)*0.3)]
         else:
             with open(path, 'r') as f:
                 self.word_seqs = list(chain(*[self.encode(tokenizer, line.strip()) for i, line in enumerate(f)]))
             with open(cache_file, 'wb') as f:
                 pickle.dump(self.word_seqs, f)
-        print("decode result")
-        print(self.tokenizer.decode(self.word_seqs))
 
     @staticmethod
     def encode(tokenizer, sent):
