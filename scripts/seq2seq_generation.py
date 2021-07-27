@@ -15,7 +15,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 
 sys.path.append(os.getcwd())
-from datautils import TextFileDataset
+from datautils import CharLevelDataset
 from module import LabelSmoothing, BasicTokenizer
 from model import Seq2Seq
 from trainer import BaseTrainer
@@ -63,20 +63,53 @@ def top_filtering(logits, top_k=0, top_p=0.0, threshold=-float('Inf'),
 
     indices_to_remove = logits < threshold
     logits[indices_to_remove] = filter_value
-    # print(f"final: {logits[:10]} elements: {(logits!=filter_value).sum()}")
-    # if temperature is not None:
-    #     logits /= temperature
     return logits
+
+def interact():
+    model = Seq2SeqProto.load_from_checkpoint('./checkpoint/epoch=1049-val_loss=0.00-loss=0.00.ckpt', conf=args).eval().cuda()
+
+    # user_inputs = input(">> user:")
+    user_inputs = '''
+    日结束。历经两年三个月零6天，一共约莫<unk>天，总字数，五百三十一万九千九百零八个字。两年多，我们一起相随，期间经历过诸多的跌跌撞撞，不过所幸，我们走到了最后。
+    '''
+    max_len = 500
+    history = model.tokenizer.convert_tokens_to_ids(model.tokenizer.tokenize(user_inputs)) if user_inputs else []
+    input_tensor = torch.LongTensor(history + [model.tokenizer.eos_token_id]).unsqueeze(0).cuda()
+    src_lengths = torch.LongTensor([len(history) + 1]).type_as(input_tensor)
+    print("原始文本: ", model.tokenizer.decode(history))
+    print(history)
+    while len(history) < max_len:
+        # logits = model.predict(input_tensor, src_lengths)
+        logits = model(input_tensor, src_lengths)
+        print(logits.size())
+        ids = []
+        for logit in logits[0]:
+            logit = top_filtering(logit/0.8, 30, 0.7)
+            probs = F.softmax(logit, dim=-1)
+            prev = torch.multinomial(probs, 1)
+            ids.append(prev.item())
+        print("top filter: ", model.tokenizer.decode(ids))
+        # print(probs)
+        # exit(0)
+        # while prev.item() == model.tokenizer.eos_token_id:
+        #     print(f'{len(history)}-current word:{prev}')
+        #     prev = torch.multinomial(probs, 1)
+        # history.append(prev.item())
+        input_tensor = torch.LongTensor(history + [model.tokenizer.eos_token_id]).unsqueeze(0).type_as(input_tensor)
+        src_lengths = torch.LongTensor([len(history) + 1]).type_as(src_lengths)
+        print(f'{len(history)}-{model.tokenizer.decode(logits.argmax(-1)[0].tolist())}')
+        exit(0)
+    print(model.tokenizer.decode(history))
 
 
 class Seq2SeqProto(BaseTrainer):
     def __init__(self, conf):
         super(Seq2SeqProto, self).__init__(conf)
         self.tokenizer = BasicTokenizer(self.conf.vocab_file, need_tokenize=False)
-        self.train_data = TextFileDataset(self.conf.train_path, self.tokenizer, self.conf.max_len,
-                                          cache_dir=self.conf.dataset_cache)
-        self.val_data = TextFileDataset(self.conf.valid_path, self.tokenizer, self.conf.max_len,
-                                        cache_dir=self.conf.dataset_cache)
+        self.train_data = CharLevelDataset(self.conf.train_path, self.tokenizer, self.conf.max_len,
+                                           cache_dir=self.conf.dataset_cache)
+        self.val_data = CharLevelDataset(self.conf.valid_path, self.tokenizer, self.conf.max_len,
+                                         cache_dir=self.conf.dataset_cache)
         self.model = Seq2Seq(self.tokenizer.vocab_size, self.conf.hidden_size, self.conf.n_layers,
                              self.conf.dropout, self.conf.max_len, self.conf.attn, share_emb=True,
                              sos=self.tokenizer.sos_token_id, eos=self.tokenizer.eos_token_id)
@@ -121,16 +154,16 @@ class Seq2SeqProto(BaseTrainer):
         return parser
 
     def training_step(self, batch, batch_idx):
-        input_ids, input_lens = tuple(input_tensor for input_tensor in batch)
-        lm_logits = self.model(input_ids, input_ids, input_lens)
+        input_ids, input_lens, labels = tuple(input_tensor for input_tensor in batch)
+        lm_logits = self.model(input_ids, labels, input_lens)
         idx = random.randint(0, input_ids.size(0)-1)
         if batch_idx % args.print_freq == 0:
             logger.warning(
                 f'Train: 预测句子：{self.tokenizer.decode(lm_logits.argmax(-1)[idx].tolist())}\n\t原始：'
-                f'{self.tokenizer.decode(input_ids[idx].tolist())}'
+                f'{self.tokenizer.decode(labels[idx].tolist())}'
             )
         lm_logits_flat_shifted = lm_logits.view(-1, lm_logits.size(-1))
-        lm_labels_flat_shifted = input_ids.view(-1)
+        lm_labels_flat_shifted = labels.view(-1)
         loss = self.criterion(lm_logits_flat_shifted, lm_labels_flat_shifted)
         ppl = torch.exp(F.cross_entropy(lm_logits_flat_shifted, lm_labels_flat_shifted, ignore_index=-100))
         # self.log_dict(tensorboard_logs, prog_bar=True, on_step=True)
@@ -146,14 +179,14 @@ class Seq2SeqProto(BaseTrainer):
         tb_logger.experiment.add_scalar('train_loss', avg_loss.item(), self.current_epoch)
 
     def validation_step(self, batch, batch_idx: int):
-        input_ids, input_lens = tuple(input_tensor for input_tensor in batch)
-        lm_logits = self.model(input_ids, input_ids, src_lengths=input_lens, teacher_forcing_ratio=0)
+        input_ids, input_lens, labels = tuple(input_tensor for input_tensor in batch)
+        lm_logits = self.model(input_ids, labels, src_lengths=input_lens, teacher_forcing_ratio=0)
         lm_logits_flat_shifted = lm_logits.view(-1, lm_logits.size(-1))
-        lm_labels_flat_shifted = input_ids.view(-1)
+        lm_labels_flat_shifted = labels.view(-1)
         idx = random.randint(0, input_ids.size(0)-1)
         if batch_idx % args.print_freq == 0:
             logger.warning(f'Valid:预测句子：{self.tokenizer.decode(lm_logits.argmax(-1)[idx].tolist())}\n\t原始：'
-                           f'{self.tokenizer.decode(input_ids[idx].tolist())}')
+                           f'{self.tokenizer.decode(labels[idx].tolist())}')
         loss = self.criterion(lm_logits_flat_shifted, lm_labels_flat_shifted)
         ppl = torch.exp(F.cross_entropy(lm_logits_flat_shifted, lm_labels_flat_shifted, ignore_index=-100))
         return {"val_loss": loss}
@@ -164,9 +197,12 @@ class Seq2SeqProto(BaseTrainer):
         self.log("val_loss", avg_loss.item(), prog_bar=True)
         tb_logger.experiment.add_scalar('val_loss', avg_loss.item(), self.current_epoch)
 
-    def forward(self, input_ids, token_type_ids):
-        lm_logits = self.model(input_ids)
+    def forward(self, input_ids, src_lengths):
+        lm_logits = self.model(input_ids, src_lengths=src_lengths, teacher_forcing_ratio=0)
         return lm_logits
+
+    def predict(self, input_seqs, src_lengths):
+        return self.model.predict(input_seqs, src_lengths)
 
     def setup(self, stage: str):
         logger.warning(f'stage--->{stage}')
@@ -211,10 +247,10 @@ if __name__ == "__main__":
     tb_logger = TensorBoardLogger(os.path.join(args.logdir, __name__), name=__name__)
 
     if args.interact:
-        # interact()
-        pass
+        interact()
     else:
-        seq2seq = Seq2SeqProto.load_from_checkpoint('checkpoint/epoch=9-val_loss=6.34-loss=6.14.ckpt',conf=args)
+        seq2seq = Seq2SeqProto.load_from_checkpoint('./checkpoint/seq_len_32_val:val_loss=11.29_train:loss=0.66_lr_test.ckpt',conf=args)
+        print(f'load from checkpoint')
         trainer = Trainer.from_argparse_args(args, default_root_dir=args.logdir,
                                              callbacks=[seq2seq.early_stop_callback, seq2seq.checkpoint_callback],
                                              check_val_every_n_epoch=args.valid_steps,

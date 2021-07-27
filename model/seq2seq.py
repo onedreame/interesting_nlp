@@ -71,27 +71,16 @@ class Seq2Seq(nn.Module):
             decoder_input = tgt[:, t] if use_teacher_forcing else decoder_output.argmax(-1)
         return torch.cat(decoder_outputs, dim=1)
 
-    def predict(self, input_seqs, src_lengths):
-        this_batch_size = input_seqs.size()[1]
-        encoder_outputs, encoder_hidden = self.encoder(input_seqs, src_lengths, None)
+    def predict(self, src, src_lengths):
+        encoder_outputs, encoder_hidden = self.encoder(src, src_lengths, None)
 
         # Prepare input and output variables
-        decoder_input = torch.LongTensor([self.sos] * this_batch_size).cuda()
+        this_batch_size = src.size()[0]
+        decoder_input = torch.LongTensor([self.sos] * this_batch_size).type_as(src)
         # 对于多层的gru，要排除掉后向的hidden，只使用前向的hidden
-        decoder_hidden = encoder_hidden.view(self.encoder.n_layers, -1, *encoder_hidden.size()[-2:])[:, 0,
-                         ...].contiguous()
+        decoder_hidden = encoder_hidden.view(self.encoder.n_layers, -1,
+                                             *encoder_hidden.size()[-2:])[:, 0, ...].contiguous()
 
-        decoder_outputs = []
+        decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden, encoder_outputs)
 
-        # Run through decoder one time step at a time
-        for _ in range(self.max_len):
-            decoder_output, decoder_hidden = self.decoder(
-                decoder_input, decoder_hidden, encoder_outputs
-            )
-            output = decoder_output.argmax(-1)
-            if torch.all(output.eq(self.eos)):
-                break
-            decoder_outputs.append(decoder_output.argmax(-1).unsqueeze(1))
-            decoder_input = output
-
-        return torch.cat(decoder_outputs, dim=1)
+        return decoder_output

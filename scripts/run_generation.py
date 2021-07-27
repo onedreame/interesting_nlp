@@ -38,19 +38,15 @@ def top_filtering(logits, top_k=0, top_p=0.0, threshold=-float('Inf'),
     """
     assert logits.dim() == 1  # Only work for batch size 1 for now
     top_k = min(top_k, logits.size(-1))
-    # print('initial: ', logits[:10])
     if top_k > 0:
         # Remove all tokens with a probability less than the last token in the top-k tokens
         indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
         logits[indices_to_remove] = filter_value
-        # print(f"top k: {logits[:10]} sum:{(logits!=filter_value).sum()}")
 
     if top_p > 0.0:
         # Compute cumulative probabilities of sorted tokens
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-        # print(f"sorted logits:{sorted_logits[:args.top_k+4]}")
         cumulative_probabilities = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-        # print(cumulative_probabilities[:10])
 
         # Remove tokens with cumulative probability above the threshold
         sorted_indices_to_remove = cumulative_probabilities > top_p
@@ -64,9 +60,6 @@ def top_filtering(logits, top_k=0, top_p=0.0, threshold=-float('Inf'),
 
     indices_to_remove = logits < threshold
     logits[indices_to_remove] = filter_value
-    # print(f"final: {logits[:10]} elements: {(logits!=filter_value).sum()}")
-    # if temperature is not None:
-    #     logits /= temperature
     return logits
 
 def generate(args, history, tokenizer, model, speaker1, speaker2, special_token_ids):
@@ -162,11 +155,13 @@ def interact():
 
 
 class GPT2Proto(BaseTrainer):
-    def __init__(self):
-        super(GPT2Proto, self).__init__(args)
+    def __init__(self, conf):
+        super(GPT2Proto, self).__init__(conf)
+        self.val_data = LSCCDataSet(conf.valid_path, self.tokenizer, conf.max_history, cache_dir=conf.dataset_cache)
+        self.train_data = LSCCDataSet(conf.train_path, self.tokenizer, conf.max_history, cache_dir=conf.dataset_cache)
         self.model, self.tokenizer = model, tokenizer
         self.criterion = LabelSmoothing(self.tokenizer.vocab_size, padding_idx=self.tokenizer.pad_token_id,
-                                        smoothing=args.smooth, ignore_idx=-100)
+                                        smoothing=conf.smooth, ignore_idx=-100)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -266,8 +261,6 @@ class GPT2Proto(BaseTrainer):
 
     def setup(self, stage: str):
         logger.warning(f'stage--->{stage}')
-        self.train_data = LSCCDataSet(args.train_path, self.tokenizer, args.max_history, cache_dir=args.dataset_cache)
-        self.val_data = LSCCDataSet(args.valid_path, self.tokenizer, args.max_history, cache_dir=args.dataset_cache)
         logger.warning(f'args---->\n{pformat(args)}')
 
     def configure_optimizers(self):
@@ -313,10 +306,9 @@ if __name__ == "__main__":
     if args.interact:
         interact()
     else:
-        gpt2 = GPT2Proto(model, tokenizer)
-        trainer = Trainer.from_argparse_args(args, checkpoint_callback=gpt2.checkpoint_callback,
-                                             default_root_dir=args.logdir,
-                                             callbacks=[gpt2.early_stop_callback, gpt2.lr_monitor],
+        gpt2 = GPT2Proto(conf=args)
+        trainer = Trainer.from_argparse_args(args, default_root_dir=args.logdir,
+                                             callbacks=[gpt2.early_stop_callback, gpt2.checkpoint_callback],
                                              check_val_every_n_epoch = args.valid_steps,
                                              auto_select_gpus=True, #auto_lr_find=True,
                                              accumulate_grad_batches=args.gradient_accumulation_steps,

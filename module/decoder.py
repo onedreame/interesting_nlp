@@ -43,11 +43,11 @@ class DecoderRNN(nn.Module):
         self.gru.flatten_parameters()
         rnn_output, hidden = self.gru(embedded, context)
 
-        if self.attn_model != "none":
+        if self.attn_model != "none" and encoder_outputs is not None:
             # Calculate attention from current RNN state and all encoder outputs;
             # apply to encoder outputs to get weighted average
             # 这里使用最底层的hidden
-            context = self.attn(hidden[0], encoder_outputs, encoder_outputs, coverage_tensor, coverage_mask)  # B 1 H
+            context, _ = self.attn(hidden[0], encoder_outputs, encoder_outputs, coverage_tensor, coverage_mask)  # B 1 H
             # context = attn_weights.bmm(encoder_outputs)  # B 1 H
 
             # Attentional vector using the RNN hidden state and context vector

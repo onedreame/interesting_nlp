@@ -1,14 +1,7 @@
----
-layout:     post
-title:      interesting nlp
-date:       2021-07-20
-author:     BY
-header-img: img/post-bg-cook.jpg
----
-
-[![](https://img.shields.io/badge/Python->=3.6-blue.svg)](https://www.python.org/)[![](https://img.shields.io/badge/tensorboard-2.4.1-brightgreen.svg)](https://pypi.python.org/pypi/pandas/0.23.0)
-[![](https://img.shields.io/badge/transformers-4.8.2-brightgreen.svg)](https://pypi.python.org/pypi/numpy/1.14.3)
-[![](https://img.shields.io/badge/pytorchliginting-1.3.8-brightgreen.svg)](https://pypi.python.org/pypi/keras/2.1.6)
+[![](https://img.shields.io/badge/Python->=3.6-blue.svg)](https://www.python.org/)
+[![](https://img.shields.io/badge/pandas-0.23.0-brightgreen.svg)](https://pypi.python.org/pypi/pandas/0.23.0)
+[![](https://img.shields.io/badge/transformers-4.8.3-brightgreen.svg)](https://pypi.org/project/transformers/)
+[![](https://img.shields.io/badge/pytorchlignting-1.3.8-brightgreen.svg)](https://pypi.org/project/pytorch-lightning/)
 [![](https://img.shields.io/badge/pytorch->=1.4-brightgreen.svg)](https://pytorch.org/get-started/locally/)<br>
 
 ## 前言

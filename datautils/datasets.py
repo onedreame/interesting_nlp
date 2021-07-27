@@ -11,7 +11,7 @@ from torch.nn.utils.rnn import pad_sequence
 sys.path.append(os.getcwd())
 from datautils.base import BaseDataset
 
-__all__ = ['LSCCDataSet', 'THUCNewsDataset', 'TextFileDataset']
+__all__ = ['LSCCDataSet', 'THUCNewsDataset', 'CharLevelDataset']
 
 
 class LSCCDataSet(BaseDataset):
@@ -165,18 +165,18 @@ class THUCNewsDataset(BaseDataset):
         label = torch.LongTensor([b['label'] for b in batch])
         return input_ids, token_type_ids, attn_mask, label
 
-class TextFileDataset(BaseDataset):
+class CharLevelDataset(BaseDataset):
     def __init__(self, path, tokenizer, seq_len=30, cache_dir="cache"):
-        super(TextFileDataset, self).__init__(tokenizer)
+        super(CharLevelDataset, self).__init__(tokenizer)
         self.seq_len = seq_len
         cache_file = os.path.join(cache_dir, path.replace("/", "_"))
         if not os.path.exists(cache_dir):
             os.mkdir(cache_dir)
         if os.path.exists(cache_file) and os.path.isfile(cache_file):
             with open(cache_file, 'rb') as f:
-                self.word_seqs = pickle.load(f)
+                self.word_seqs = pickle.load(f)[:20000]
                 print("小说总长度：", len(self.word_seqs))
-                self.word_seqs = self.word_seqs[:int(len(self.word_seqs)*0.3)]
+                # self.word_seqs = self.word_seqs[:int(len(self.word_seqs)*0.3)]
         else:
             with open(path, 'r') as f:
                 self.word_seqs = list(chain(*[self.encode(tokenizer, line.strip()) for i, line in enumerate(f)]))
@@ -197,18 +197,23 @@ class TextFileDataset(BaseDataset):
         return len(self.word_seqs) // self.seq_len
 
     def __getitem__(self, item):
-        return self.word_seqs[item * self.seq_len : min(len(self.word_seqs), (item + 1) * self.seq_len)] + \
+        words = self.word_seqs[item * self.seq_len : min(len(self.word_seqs) - 1, (item + 1) * self.seq_len)] + \
                [self.tokenizer.eos_token_id]
+        labels = self.word_seqs[item * self.seq_len + 1: min(len(self.word_seqs), (item + 1) * self.seq_len) + 1] + \
+              [self.tokenizer.eos_token_id]
+        return {"inputs": words, "labels": labels}
 
     def collate(self, batch):
         if self.tokenizer.pad_token is None:
             pad_value = 0
         else:
             pad_value = self.tokenizer.pad_token_id
-        input_ids = pad_sequence([torch.tensor(b, dtype=torch.long) for b in batch],
-                                 batch_first=True, padding_value=pad_value)
+        input_ids = pad_sequence([torch.tensor(b['inputs'], dtype=torch.long) for b in batch],
+                                  batch_first=True, padding_value=pad_value)
         input_lens = torch.tensor([len(b) for b in batch], dtype=torch.long)
-        return input_ids, input_lens
+        labels = pad_sequence([torch.tensor(b['labels'], dtype=torch.long) for b in batch],
+                               batch_first=True, padding_value=pad_value)
+        return input_ids, input_lens, labels
 
 if __name__ == '__main__':
     # LSCCDataSet('../chatbot/datasets/lscc/LCCC-base_train.json',)
@@ -226,7 +231,7 @@ if __name__ == '__main__':
          4785,   14, 4785,   14, 4785,    9, 4786]).tolist():
         print(b)
 
-    val_data = TextFileDataset('/root/PycharmProjects/interesting_nlp/datasets/doupo/train.txt', tokenizer)
+    val_data = CharLevelDataset('/root/PycharmProjects/interesting_nlp/datasets/doupo/train.txt', tokenizer)
     iter = torch.utils.data.DataLoader(val_data, batch_size=4, num_workers=2,collate_fn=val_data.collate)
     print(val_data.word_seqs)
     print("$$$$$$$$$$$$$$$$$$\n", tokenizer.decode(val_data.word_seqs))
