@@ -9,9 +9,10 @@
 
 import os
 import json
+from itertools import chain
 import torch.utils.data as data
 
-__all__ = ['SingleFIleDataset', 'MultiFilesDataset']
+__all__ = ['BaseDataset', 'MultiFilesDataset']
 
 
 def truncate_seq_pair(max_seq_len, tokens_a, tokens_b):
@@ -51,6 +52,10 @@ class BaseDataset(data.Dataset):
 
     def __init__(self, tokenizer=None, **kwargs):
         self.tokenizer = tokenizer
+
+    @classmethod
+    def flatten(cls, seq_list):
+        return list(chain(*seq_list))
 
     def encode(self, sent):
         return self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent))

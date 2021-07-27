@@ -18,7 +18,7 @@
 |-- model                     # 模型目录
 |-- module                    # 模型相关组件
 |-- scripts                   # 训练及预测等脚步
-|-- trainer										# pytorch-learning训练框架
+|-- trainer									  # pytorch-learning训练框架
 |-- utils                     
 ```
 
@@ -36,15 +36,31 @@
 
 &emsp;这个任务指的是一些模型自主创作的任务，比如小说生成，诗词生成等等。
 
-&emsp;在[transformer](https://onedreame.github.io/2020/09/06/transformer/)家族出现以前，这类任务基本由以*RNN-based*的*seq2seq*类模型统治，不过这类模型有一些问题，就是生成的效果不佳，表现为语句不够通顺，多样性差，安全回复居多等等。此外，由于*RNN*的序列特性，其还存在诸如梯度弥散等现象，总之各种因素结合起来，导致*seq2seq*虽然用的最频繁，但是其效果并不尽如人意.不过在一些对语句通顺性要求没那么高或者生成文本较短的情况下，*seq2seq*还是可以满足需要的。
+&emsp;在[transformer](https://onedreame.github.io/2020/09/06/transformer/)家族出现以前，这类任务基本由以*RNN-based*的*seq2seq*类模型统治，不过这类模型有一些问题，就是生成的效果不佳，表现为语句不够通顺，多样性差，安全回复居多等等。此外，由于*RNN*的序列特性，其还存在诸如梯度弥散等现象，总之各种因素结合起来，导致*seq2seq*虽然用的最频繁，但是其效果并不尽如人意.不过在一些对语句通顺性要求没那么高(诗歌)或者生成文本较短的情况下，*seq2seq*还是可以满足需要的。
 
+#### 2.2 人机对话
 
+&emsp;对于人机对话来说，存在着单轮和多轮之分，*seq2seq*处理单轮对话是非常自然的，不过在多轮回话层面则没有那么自然，目前已有的研究在使用seq2seq处理多轮对话的时候多采用 [*hierarchical recurrent encoder-decoder*](https://onedreame.github.io/2020/08/01/%E5%A4%9A%E8%BD%AE%E5%AF%B9%E8%AF%9D%E6%A8%A1%E5%9E%8B%E6%BC%AB%E6%B8%B8/)也即是层次化的seq2seq来建模多轮回话。
 
-### 参考
+![](https://pic1.zhimg.com/80/v2-9fa6e8edbd67e885af75b273984b6b48_1440w.jpg)
 
-- [WWDC 2018 Keynote](https://developer.apple.com/videos/play/wwdc2018/101/)
-- [Apple WWDC 2018: what's new? All the announcements from the keynote](https://www.techradar.com/news/apple-wwdc-2018-keynote)
-- [iOS 加入「防沉迷」，macOS 有了暗色主题，今年的 WWDC 重点都在系统上](http://www.ifanr.com/1043270)
-- [苹果 WWDC 2018：最全总结看这里，不错过任何重点](https://sspai.com/post/44816)
+&emsp;这类模型通常分为多层的*encoder*，底层的*encoder*用来对句子内建模，而高层的*encoder*则负责对句子间建模，这类模型由于采用了超多的*RNN*，所以需要精细的调参才可以收敛，而且收敛后的效果也不算多令人满意。
 
+&emsp;不过，随着*GPT*为代表的*transformer*类模型的横空出世，多轮对话出现了很大的转机，对话效果有了比较大的提升，本工程也包含了*gpt2*训练多轮会话的实现，目录为$scripts/run\_generation.py$ 
 
+> transformer类模型虽然效果不错，但是所需算力非常庞大，不要轻易尝试train from scratch，这点谨记。
+
+&emsp;这里给出一些对话样例：
+
+```python
+>>你叫什么啊？
+我叫什么？
+>>是的，问你话呢
+不知道
+>>呵呵呵
+你不是人
+>>你咋骂人？
+骂人怎么了
+```
+
+&emsp;transformer-based模型以庞大的参数换来了良好的效果，不过其性能问题比较严重，所需资源太多，使用受限，后续可通过蒸馏的方式去把transformer-based模型的性能迁移到轻量级的模型上去，是个不错的方向。

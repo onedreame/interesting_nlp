@@ -11,8 +11,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import LambdaLR
 from transformers import CONFIG_NAME, AdamW, get_linear_schedule_with_warmup, get_cosine_schedule_with_warmup
-from transformers import (OpenAIGPTLMHeadModel, GPT2LMHeadModel,
-                          OpenAIGPTConfig, GPT2Config, BertTokenizer)
+from transformers import (OpenAIGPTLMHeadModel, OpenAIGPTConfig, BertTokenizer)
 from pytorch_lightning import Trainer
 
 sys.path.append(os.getcwd())
@@ -71,102 +70,62 @@ def generate(args, history, tokenizer, model, speaker1, speaker2, special_token_
             new_user_input_ids_tensor = torch.tensor(new_user_input_ids, dtype=torch.long).unsqueeze(0).cuda()
             token_type_ids_tensor = torch.tensor(token_type_ids, dtype=torch.long).unsqueeze(0).cuda()
             outputs = model(new_user_input_ids_tensor, token_type_ids=token_type_ids_tensor)
-            print(f"input:{tokenizer.convert_ids_to_tokens(new_user_input_ids)}")
-            logits = outputs[0,-1,:] / args.temperature
+            logits = outputs[0, -1, :] / args.temperature
             # logits = outputs[0][0, -1, :]
             logits = top_filtering(logits, args.top_k,top_p=args.top_p)
             probs = F.softmax(logits, dim=-1)
             prev = torch.multinomial(probs, 1)
-            # print(f"step:{i} token:{tokenizer.convert_ids_to_tokens(prev.item())} output[0]:{outputs[0].size()}"
-            #       f"current output:{tokenizer.convert_ids_to_tokens(current_output)}")
             if i < args.min_length and prev.item() in special_token_ids:
                 while prev.item() in special_token_ids:
                     print("resample: ", tokenizer.convert_ids_to_tokens(prev.item()))
-                    # exit(0)
                     prev = torch.multinomial(probs, 1)
             if prev.item() in special_token_ids:
                 break
             current_output.append(prev.item())
     return current_output
 
-# def interact(args, model, tokenizer):
-#     user_inputs = input(">> user:")
-#     speaker1, speaker2 = LSCCDataSet.get_identity_id(tokenizer)
-#
-#     special_token_ids = [tokenizer.cls_token_id, tokenizer.sep_token_id, tokenizer.pad_token_id, speaker2, speaker1]
-#     tokenizer.add_special_tokens({"additional_special_tokens": [tokenizer.convert_ids_to_tokens(_id)
-#                                                                 for _id in [speaker1, speaker2]]})
-#     print(tokenizer.all_special_tokens)
-#     history = []
-#     while user_inputs != "bye":
-#         while not user_inputs:
-#             print("输入不能为空")
-#             user_inputs = input(">> user:")
-#         user_inputs = " ".join(list(user_inputs.replace(" ", "")))
-#         history.append(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(user_inputs)))
-#         output_id = generate(args, history, tokenizer, model, speaker1, speaker2, special_token_ids)
-#         print(output_id)
-#         history.append(output_id)
-#         history = history[-(2*args.max_history+1):]
-#         print("Bot: ", tokenizer.decode(output_id,skip_special_tokens=True))
-#         user_inputs = input(">> user:")
-
-def huggingface_initialize_model():
-    model_class = OpenAIGPTLMHeadModel if not args.gpt2 else GPT2LMHeadModel
-    config_class = OpenAIGPTConfig if not args.gpt2 else GPT2Config
-    tokenizer_class = BertTokenizer
-    if args.pretrained:
-        # 不收敛的情况下检查学习率和初始化的模型是否有问题， dataset的shuffle也可能导致收敛效果不好
-        tokenizer = tokenizer_class.from_pretrained(args.model_checkpoint, do_lower_case=True,
-                                                    never_split=["[speaker1]", "[speaker2]"])
-        model = model_class.from_pretrained(args.model_checkpoint)
-    else:
-        tokenizer = tokenizer_class(os.path.join(args.model_checkpoint, "vocab.txt"), do_lower_case=True,
-                                    never_split=["[speaker1]", "[speaker2]"])
-        config = config_class.from_json_file(os.path.join(args.model_checkpoint, CONFIG_NAME))
-        model = model_class(config)
-    return model, tokenizer
-
 def interact():
-    checkpoint = glob(os.path.join('.', "*ckpt"))[0]
+    # checkpoint = glob(os.path.join('.', "*ckpt"))[0]
     # model.load_state_dict(torch.load(checkpoint)['state_dict'])
-    gpt2_model = GPT2Proto.load_from_checkpoint(checkpoint).eval().cuda()
 
     user_inputs = input(">> user:")
-    speaker1, speaker2 = LSCCDataSet.get_identity_id(tokenizer)
+    speaker1, speaker2 = LSCCDataSet.get_identity_id(gpt2.tokenizer)
 
-    special_token_ids = [tokenizer.cls_token_id, tokenizer.sep_token_id, tokenizer.pad_token_id, speaker2, speaker1]
-    tokenizer.add_special_tokens({"additional_special_tokens": [tokenizer.convert_ids_to_tokens(_id)
-                                                                for _id in [speaker1, speaker2]]})
-    print(tokenizer.all_special_tokens)
+    special_token_ids = [gpt2.tokenizer.cls_token_id, gpt2.tokenizer.sep_token_id,
+                         gpt2.tokenizer.pad_token_id, speaker2, speaker1]
+    gpt2.tokenizer.add_special_tokens({"additional_special_tokens": [gpt2.tokenizer.convert_ids_to_tokens(_id)
+                                                                     for _id in [speaker1, speaker2]]})
+    print(gpt2.tokenizer.all_special_tokens)
     history = []
     while user_inputs != "bye":
         while not user_inputs:
             print("输入不能为空")
             user_inputs = input(">> user:")
         user_inputs = " ".join(list(user_inputs.replace(" ", "")))
-        history.append(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(user_inputs)))
-        output_id = generate(args, history, tokenizer, gpt2_model, speaker1, speaker2, special_token_ids)
-        print(output_id)
+        history.append(gpt2.tokenizer.convert_tokens_to_ids(gpt2.tokenizer.tokenize(user_inputs)))
+        output_id = generate(args, history, gpt2.tokenizer, gpt2, speaker1, speaker2, special_token_ids)
         history.append(output_id)
         history = history[-(2 * args.max_history + 1):]
-        print("Bot: ", tokenizer.decode(output_id, skip_special_tokens=True))
+        print("Bot: ", gpt2.tokenizer.decode(output_id, skip_special_tokens=True))
         user_inputs = input(">> user:")
 
 
 class GPT2Proto(BaseTrainer):
     def __init__(self, conf):
         super(GPT2Proto, self).__init__(conf)
-        self.val_data = LSCCDataSet(conf.valid_path, self.tokenizer, conf.max_history, cache_dir=conf.dataset_cache)
-        self.train_data = LSCCDataSet(conf.train_path, self.tokenizer, conf.max_history, cache_dir=conf.dataset_cache)
-        self.model, self.tokenizer = model, tokenizer
-        self.criterion = LabelSmoothing(self.tokenizer.vocab_size, padding_idx=self.tokenizer.pad_token_id,
-                                        smoothing=conf.smooth, ignore_idx=-100)
+        if not conf.interact:
+            self.val_data = LSCCDataSet(conf.valid_path, self.tokenizer, conf.max_history, cache_dir=conf.dataset_cache)
+            self.train_data = LSCCDataSet(conf.train_path, self.tokenizer, conf.max_history, cache_dir=conf.dataset_cache)
+            self.criterion = LabelSmoothing(self.tokenizer.vocab_size, padding_idx=self.tokenizer.pad_token_id,
+                                            smoothing=conf.smooth, ignore_idx=-100)
+
+        self.model, self.tokenizer = huggingface_initilize(model_class, config_class, tokenizer_class,
+                                                           never_split=["[speaker1]", "[speaker2]"],
+                                                           do_lower_case=True,**vars(conf))
 
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--gpt2', action='store_true', help="use gpt2")
         parser.add_argument('--pretrained', action='store_true', help="If False train from scratch")
         parser.add_argument("--model_checkpoint", type=str, default="config/cgpt/",
                             help="Path or URL of the module, if in interact mode, must set")
@@ -256,8 +215,8 @@ class GPT2Proto(BaseTrainer):
             logger.warning(f"out of size: input ids:{input_ids.size()} token:{token_type_ids.size()}")
             input_ids = input_ids[..., :512]
             token_type_ids = token_type_ids[..., :512]
-        lm_logits, *_ = self.model(input_ids, token_type_ids=token_type_ids)
-        return lm_logits
+        outputs = self.model(input_ids, token_type_ids=token_type_ids)
+        return outputs.logits
 
     def setup(self, stage: str):
         logger.warning(f'stage--->{stage}')
@@ -296,17 +255,15 @@ if __name__ == "__main__":
     parser = GPT2Proto.add_model_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
-    model_class = OpenAIGPTLMHeadModel if not args.gpt2 else GPT2LMHeadModel
-    config_class = OpenAIGPTConfig if not args.gpt2 else GPT2Config
+    model_class = OpenAIGPTLMHeadModel
+    config_class = OpenAIGPTConfig
     tokenizer_class = BertTokenizer
-    model, tokenizer = huggingface_initilize(model_class, config_class, tokenizer_class, do_lower_case=True,
-                                             pretrained=args.pretrained,
-                                             model_checkpoint=args.model_checkpoint,
-                                             never_split=["[speaker1]", "[speaker2]"])
+    gpt2 = GPT2Proto(conf=args)
+
     if args.interact:
+        gpt2 = gpt2.eval().cuda()
         interact()
     else:
-        gpt2 = GPT2Proto(conf=args)
         trainer = Trainer.from_argparse_args(args, default_root_dir=args.logdir,
                                              callbacks=[gpt2.early_stop_callback, gpt2.checkpoint_callback],
                                              check_val_every_n_epoch = args.valid_steps,

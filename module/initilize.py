@@ -17,16 +17,14 @@ def init_weights(module, config=None):
     if isinstance(module, nn.Linear) and module.bias is not None:
         module.bias.data.zero_()
 
-def huggingface_initilize(model_class, config_class, tokenizer_class, do_lower_case=True, pretrained=False,
-                          model_checkpoint=None, never_split=None):
+def huggingface_initilize(model_class, config_class, tokenizer_class, pretrained=False,
+                          model_checkpoint=None, **kwargs):
     if pretrained:
         # 不收敛的情况下检查学习率和初始化的模型是否有问题， dataset的shuffle也可能导致收敛效果不好
-        tokenizer = tokenizer_class.from_pretrained(model_checkpoint, do_lower_case=do_lower_case,
-                                                    never_split=never_split)
+        tokenizer = tokenizer_class.from_pretrained(model_checkpoint, **kwargs)
         model = model_class.from_pretrained(model_checkpoint)
     else:
-        tokenizer = tokenizer_class(os.path.join(model_checkpoint, "vocab.txt"), do_lower_case=do_lower_case,
-                                    never_split=never_split)
+        tokenizer = tokenizer_class(os.path.join(model_checkpoint, "vocab.txt"), **kwargs)
         config = config_class.from_json_file(os.path.join(model_checkpoint, CONFIG_NAME))
         model = model_class(config)
     return model, tokenizer

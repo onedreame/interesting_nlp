@@ -45,7 +45,7 @@ class LSCCDataSet(BaseDataset):
             return json.load(f)
 
     @classmethod
-    def encode(cls, history, reply, tokenizer, speaker1, speaker2, set_up=True, with_sep=True):
+    def encode(cls, history, reply, tokenizer, speaker1, speaker2, with_sep=True, do_encode=True):
         '''
         tokens转化为ids 序列，为了防止会话长度过长，通过max_history进行截断
         :param history: 历史会话序列
@@ -56,10 +56,6 @@ class LSCCDataSet(BaseDataset):
         :param set_up: bool, 是否需要进行初始化设置
         :return: dict
         '''
-        if set_up:
-            speaker1, speaker2 = cls.get_identity_id(tokenizer)
-            cls.__setattr__(cls, "speaker1", speaker1)
-            cls.__setattr__(cls, "speaker2", speaker2)
         if do_encode:
             history = [tokenizer.convert_tokens_to_ids(tokenizer.tokenize(seq)) for seq in history]
             reply = [tokenizer.convert_tokens_to_ids(tokenizer.tokenize(seq)) +
@@ -75,7 +71,7 @@ class LSCCDataSet(BaseDataset):
                                                      for _ in s]
         lm_labels = [-100 for i, s in enumerate(input_ids[:-1]) for _ in s] + [-100] + input_ids[-1][1:]
         return {
-            "input_ids": super._flatten(input_ids),
+            "input_ids": cls.flatten(input_ids),
             "token_type_ids": token_type_ids,
             "lm_labels": lm_labels
         }
