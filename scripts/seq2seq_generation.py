@@ -249,7 +249,7 @@ if __name__ == "__main__":
     if args.interact:
         interact()
     else:
-        seq2seq = Seq2SeqProto.load_from_checkpoint('./checkpoint/seq_len_32_val:val_loss=11.29_train:loss=0.66_lr_test.ckpt',conf=args)
+        seq2seq = Seq2SeqProto(args)# load_from_checkpoint('./checkpoint/seq_len_32_val:val_loss=11.29_train:loss=0.66_lr_test.ckpt',conf=args)
         print(f'load from checkpoint')
         trainer = Trainer.from_argparse_args(args, default_root_dir=args.logdir,
                                              callbacks=[seq2seq.early_stop_callback, seq2seq.checkpoint_callback],

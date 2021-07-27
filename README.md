@@ -10,6 +10,20 @@
 
 &emsp;由于目前的深度学习工程已经相当的模块化，为了整洁及便利性，该工程会考虑使用pytorch- lighting来组织训练。
 
+```shell
+/
+|-- configs                   # 配置文件，可选
+|-- datasets                  # 数据集存放路径
+|-- datautils                 # 数据集处理脚本
+|-- model                     # 模型目录
+|-- module                    # 模型相关组件
+|-- scripts                   # 训练及预测等脚步
+|-- trainer										# pytorch-learning训练框架
+|-- utils                     
+```
+
+
+
 ### 1.文本分类
 
 &emsp;文本分类作为一项非常基础的工作，看起来似乎没那么好玩，所以这里也只是尝试了使用Bert作为分类器来使用，数据集为[THUCNews](http://thuctc.thunlp.org/)处理后的[语料库](https://github.com/649453932/Chinese-Text-Classification-Pytorch)，分类准确率98%左右。
@@ -21,6 +35,8 @@
 #### 2.1 文本序列生成
 
 &emsp;这个任务指的是一些模型自主创作的任务，比如小说生成，诗词生成等等。
+
+&emsp;在[transformer](https://onedreame.github.io/2020/09/06/transformer/)家族出现以前，这类任务基本由以*RNN-based*的*seq2seq*类模型统治，不过这类模型有一些问题，就是生成的效果不佳，表现为语句不够通顺，多样性差，安全回复居多等等。此外，由于*RNN*的序列特性，其还存在诸如梯度弥散等现象，总之各种因素结合起来，导致*seq2seq*虽然用的最频繁，但是其效果并不尽如人意.不过在一些对语句通顺性要求没那么高或者生成文本较短的情况下，*seq2seq*还是可以满足需要的。
 
 
 
